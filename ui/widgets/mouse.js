@@ -29,10 +29,22 @@
 	}
 }( function( $ ) {
 
+var _isTouchSupported = "ontouchstart" in window;
+
 var mouseHandled = false;
-$( document ).on( "mouseup", function() {
-	mouseHandled = false;
-} );
+if (_isTouchSupported)
+{
+  $(document).on("touchend touchcancel", function() {
+    mouseHandled = false;
+  });
+}
+else
+{
+  $(document).mouseup(function() {
+    mouseHandled = false;
+  });
+}
+
 
 return $.widget( "ui.mouse", {
 	version: "@VERSION",
@@ -41,12 +53,70 @@ return $.widget( "ui.mouse", {
 		distance: 1,
 		delay: 0
 	},
+  _DRAG_START: _isTouchSupported ? 'touchstart' : 'mousedown',
+  _DRAG_MOVE: _isTouchSupported ? 'touchmove' : 'mousemove',
+  _DRAG_END: _isTouchSupported ? 'touchend' : 'mouseup',
+  _getFirstTouchPoint: function(evt)
+  {
+    if (evt["changedTouches"] && evt["changedTouches"].length)
+    {
+      return evt["changedTouches"][0];
+    }
+    else if (evt["targetTouches"] && evt["targetTouches"].length)
+    {
+      return evt["targetTouches"][0];
+    }
+    else if (evt["touches"] && evt["touches"].length)
+    {
+      return evt["touches"][0];
+    }
+    return null;
+  },
+  _wrapTouch: function(event)
+  {
+    if (["touchstart", "touchmove", "touchend"].indexOf(event["type"]) < 0)
+      return event;
+
+    var _TOUCH_TO_MOUSE_XREF = {'touchstart': 'mousedown', 'touchmove': 'mousemove', 'touchend': 'mouseup'};
+    var _COPY_SAFE_EVENT_PROPERTIES = {'altKey': true, 'bubbles': true, 'cancelable': true, 'ctrlKey': true,
+        'currentTarget': true, 'eventPhase': true, 'metaKey': true,
+        'relatedTarget': true, 'shiftKey': true, 'target': true, 'timeStamp': true,
+        'view': true, 'which': true, 'button': true, 'buttons': true, 'clientX': true,
+        'clientY': true, 'offsetX': true, 'offsetY': true, 'pageX': true,
+        'pageY': true, 'screenX': true, 'screenY': true, 'toElement': true,
+        'char': true, 'charCode': true, 'key': true, 'keyCode': true};
+
+    simulatedEvent = document.createEvent("MouseEvent");
+    var touch = this._getFirstTouchPoint(event.originalEvent);
+
+    simulatedEvent.initMouseEvent(_TOUCH_TO_MOUSE_XREF[event.type], true, true, window, 1,
+      touch.screenX, touch.screenY, touch.clientX, touch.clientY, false,
+      false, false, false, 0/*left*/, null);
+
+    //not going to dispatch the event so set the target here
+    var target = event.originalEvent.target;
+    simulatedEvent.target = target;
+
+    // Capture all interesting event properties.  Similar to jQuery.event.fix.
+    var props = {};
+    for (var key in simulatedEvent)
+    {
+      if (_COPY_SAFE_EVENT_PROPERTIES[key] && !$.isFunction(simulatedEvent[key]))
+        props[key] = simulatedEvent[key];
+    }
+    props["target"] = target;
+
+    // Wrap a native simulated event in a jQuery.Event extending properties
+    var dragEvent = $.Event(simulatedEvent, props);
+    return dragEvent;
+  },
 	_mouseInit: function() {
 		var that = this;
 
 		this.element
-			.on( "mousedown." + this.widgetName, function( event ) {
-				return that._mouseDown( event );
+			.on( this._DRAG_START + "." + this.widgetName, function( event ) {
+        var e = that._wrapTouch(event);
+				return that._mouseDown( e );
 			} )
 			.on( "click." + this.widgetName, function( event ) {
 				if ( true === $.data( event.target, that.widgetName + ".preventClickEvent" ) ) {
@@ -65,8 +135,8 @@ return $.widget( "ui.mouse", {
 		this.element.off( "." + this.widgetName );
 		if ( this._mouseMoveDelegate ) {
 			this.document
-				.off( "mousemove." + this.widgetName, this._mouseMoveDelegate )
-				.off( "mouseup." + this.widgetName, this._mouseUpDelegate );
+				.off( this._DRAG_MOVE + "." + this.widgetName, this._mouseMoveDelegate )
+				.off( this._DRAG_END + "." + this.widgetName, this._mouseUpDelegate );
 		}
 	},
 
@@ -116,15 +186,17 @@ return $.widget( "ui.mouse", {
 
 		// These delegates are required to keep context
 		this._mouseMoveDelegate = function( event ) {
-			return that._mouseMove( event );
+      var e = that._wrapTouch(event);
+			return that._mouseMove( e );
 		};
 		this._mouseUpDelegate = function( event ) {
-			return that._mouseUp( event );
+      var e = that._wrapTouch(event);
+			return that._mouseUp( e );
 		};
 
 		this.document
-			.on( "mousemove." + this.widgetName, this._mouseMoveDelegate )
-			.on( "mouseup." + this.widgetName, this._mouseUpDelegate );
+			.on( this._DRAG_MOVE + "." + this.widgetName, this._mouseMoveDelegate )
+			.on( this._DRAG_END + "." + this.widgetName, this._mouseUpDelegate );
 
 		event.preventDefault();
 
@@ -179,8 +251,8 @@ return $.widget( "ui.mouse", {
 
 	_mouseUp: function( event ) {
 		this.document
-			.off( "mousemove." + this.widgetName, this._mouseMoveDelegate )
-			.off( "mouseup." + this.widgetName, this._mouseUpDelegate );
+			.off( this._DRAG_MOVE + "." + this.widgetName, this._mouseMoveDelegate )
+			.off( this._DRAG_END + "." + this.widgetName, this._mouseUpDelegate );
 
 		if ( this._mouseStarted ) {
 			this._mouseStarted = false;
